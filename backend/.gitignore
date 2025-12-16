@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual Environment
+venv/
+.env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Build / cache
+build/
+dist/
+*.egg-info/
+
+# Model / cache (if any)
+.cache/
