@@ -11,17 +11,16 @@ async def translate_ws(ws: WebSocket):
         while True:
             message = await ws.receive()
 
-            # Handle text messages
-            if "text" in message:
-                text = message["text"]
-                print("Received text:", text)
-                await ws.send_text(f"Echo: {text}")
+            if message["type"] == "websocket.disconnect":
+                print("Client disconnected")
+                break
 
-            # Handle binary messages (audio later)
-            elif "bytes" in message:
+            if "bytes" in message and message["bytes"] is not None:
                 data = message["bytes"]
                 print("Received bytes:", len(data))
-                await ws.send_text(f"Received {len(data)} bytes")
 
     except WebSocketDisconnect:
-        print("Client disconnected")
+        print("WebSocketDisconnect")
+
+    except Exception as e:
+        print("WebSocket error:", e)
