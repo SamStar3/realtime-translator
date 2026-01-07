@@ -1,7 +1,8 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from app.asr import StreamingASR
+from app.asr_streaming import StreamingASR
 from app.translator import Translator
 from app.language_map import LANG_MAP
+import json
 
 router = APIRouter()
 
@@ -13,56 +14,47 @@ async def translate_ws(ws: WebSocket):
     asr = StreamingASR()
     translator = Translator()
 
-    target_lang = "es"  # default Spanish
+    target_lang = "es"
 
     try:
         while True:
-            message = await ws.receive()
+            msg = await ws.receive()
 
-            # 🎧 Audio stream
-            if "bytes" in message and message["bytes"]:
-                asr.add_audio(message["bytes"])
-
-            # 📩 Control messages
-            if "text" in message and message["text"]:
-                text_msg = message["text"]
-
-                # 🎯 Target language selection
-                if text_msg.startswith("{"):
-                    data = eval(text_msg)
+            # 🎯 control messages
+            if "text" in msg and msg["text"]:
+                if msg["text"].startswith("{"):
+                    data = json.loads(msg["text"])
                     target_lang = data.get("target_language", "es")
                     print(f"🎯 Target language set to: {target_lang}")
+                elif msg["text"] == "__STOP__":
+                    await ws.close()
+                    return
 
-                # 🛑 Stop signal
-                elif text_msg == "__STOP__":
-                    print("🛑 Stop signal received")
+            # 🎧 audio bytes
+            if "bytes" in msg and msg["bytes"]:
+                asr.add_audio(msg["bytes"])
+                segments = asr.process()
 
-                    final_text, src_lang = asr.transcribe_final()
-
-                    if not final_text:
-                        await ws.close()
-                        return
-
-                    src_code = LANG_MAP.get(src_lang, "eng_Latn")
+                for seg in segments:
+                    src_code = LANG_MAP.get(seg["language"], "eng_Latn")
                     tgt_code = LANG_MAP.get(target_lang, "spa_Latn")
 
                     translated = translator.translate(
-                        final_text,
+                        seg["text"],
                         src_code,
                         tgt_code
                     )
 
                     await ws.send_json({
-                        "type": "final",
-                        "source_language": src_lang,
+                        "type": "segment",
+                        "id": seg["id"],
+                        "start": seg["start"],
+                        "end": seg["end"],
+                        "source_language": seg["language"],
                         "target_language": target_lang,
-                        "original_text": final_text,
+                        "original_text": seg["text"],
                         "translated_text": translated
                     })
-
-                    await ws.close()
-                    print("🔌 WebSocket closed cleanly")
-                    return
 
     except WebSocketDisconnect:
         print("❌ Client disconnected")

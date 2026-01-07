@@ -17,113 +17,71 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: AudioPage(),
+      home: SpeechTranslatorPage(),
     );
   }
 }
 
-/// 🌍 Supported Languages
-const Map<String, String> languageMap = {
-  "Spanish": "es",
-  "French": "fr",
-  "German": "de",
-  "Hindi": "hi",
-  "Tamil": "ta",
-  "Japanese": "ja",
-  "Chinese": "zh",
-};
-
-class AudioPage extends StatefulWidget {
-  const AudioPage({super.key});
+class SpeechTranslatorPage extends StatefulWidget {
+  const SpeechTranslatorPage({super.key});
 
   @override
-  State<AudioPage> createState() => _AudioPageState();
+  State<SpeechTranslatorPage> createState() => _SpeechTranslatorPageState();
 }
 
-class _AudioPageState extends State<AudioPage> {
+class _SpeechTranslatorPageState extends State<SpeechTranslatorPage> {
   final AudioRecorder _recorder = AudioRecorder();
-
+  StreamSubscription<Uint8List>? _audioSub;
   IOWebSocketChannel? _channel;
-  StreamSubscription<Uint8List>? _audioSubscription;
 
-  bool _isRecording = false;
-  bool _socketConnected = false;
+  bool _recording = false;
 
-  String _selectedLanguageName = "Spanish";
-  String _targetLanguage = "es";
+  final List<_Segment> _segments = [];
+  final ScrollController _scroll = ScrollController();
 
-  String _translatedText = "";
-  String _languageInfo = "";
+  String targetLanguage = "es";
 
-  /// 🔌 CONNECT WEBSOCKET
-  Future<void> _connectWebSocket() async {
-    if (_socketConnected) return;
+  // ------------------ CONNECT ------------------
+  Future<void> _connect() async {
+    _channel = IOWebSocketChannel.connect(
+      Uri.parse("ws://192.168.1.2:8000/ws/translate"),
+    );
 
-    try {
-      _channel = IOWebSocketChannel.connect(
-        Uri.parse("ws://192.168.1.2:8000/ws/translate"),
-      );
+    _channel!.sink.add(jsonEncode({
+      "target_language": targetLanguage,
+    }));
 
-      _socketConnected = true;
-      print("🔌 WebSocket connected");
+    _channel!.stream.listen((message) {
+      final data = jsonDecode(message);
 
-      // ✅ Send target language once
-      _channel!.sink.add(jsonEncode({
-        "target_language": _targetLanguage,
-      }));
-      print("🎯 Target language sent: $_targetLanguage");
+      if (data["type"] == "segment") {
+        setState(() {
+          _segments.add(
+            _Segment(
+              original: data["original_text"],
+              translated: data["translated_text"],
+              sourceLang: data["source_language"],
+              targetLang: data["target_language"],
+            ),
+          );
+        });
 
-      _channel!.stream.listen(
-            (message) {
-          if (message is String) {
-            try {
-              final data = jsonDecode(message);
-
-              if (data["type"] == "final") {
-                setState(() {
-                  _translatedText = data["translated_text"] ?? "";
-                  _languageInfo =
-                  "${data["source_language"]} → ${data["target_language"]}";
-                });
-
-                print("📝 TRANSLATED: $_translatedText ($_languageInfo)");
-              }
-            } catch (e) {
-              print("⚠️ Invalid JSON: $message");
-            }
-          }
-        },
-        onDone: () {
-          print("🔌 WebSocket closed by backend");
-          _socketConnected = false;
-          _channel = null;
-        },
-        onError: (e) {
-          print("❌ WebSocket error: $e");
-          _socketConnected = false;
-          _channel = null;
-        },
-      );
-    } catch (e) {
-      print("❌ WebSocket connection failed: $e");
-      _socketConnected = false;
-      _channel = null;
-    }
+        // auto scroll
+        Future.delayed(const Duration(milliseconds: 50), () {
+          _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        });
+      }
+    });
   }
 
-  /// ▶ START RECORDING
-  Future<void> _startRecording() async {
-    if (_isRecording) return;
+  // ------------------ START ------------------
+  Future<void> _start() async {
+    if (!await _recorder.hasPermission()) return;
 
-    if (!await _recorder.hasPermission()) {
-      print("❌ Microphone permission denied");
-      return;
-    }
+    _segments.clear();
+    await _connect();
 
-    await _connectWebSocket();
-    if (!_socketConnected) return;
-
-    final audioStream = await _recorder.startStream(
+    final stream = await _recorder.startStream(
       const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
@@ -131,121 +89,115 @@ class _AudioPageState extends State<AudioPage> {
       ),
     );
 
-    setState(() => _isRecording = true);
-    print("▶ Recording started");
+    setState(() => _recording = true);
 
-    _audioSubscription = audioStream.listen((Uint8List data) {
-      if (_isRecording && _socketConnected && _channel != null) {
-        _channel!.sink.add(data);
-      }
+    _audioSub = stream.listen((chunk) {
+      _channel?.sink.add(chunk);
     });
   }
 
-  /// ⏹ STOP RECORDING
-  Future<void> _stopRecording() async {
-    if (!_isRecording) return;
+  // ------------------ STOP ------------------
+  Future<void> _stop() async {
+    setState(() => _recording = false);
 
-    setState(() => _isRecording = false);
-
-    await _audioSubscription?.cancel();
+    await _audioSub?.cancel();
     await _recorder.stop();
 
-    if (_socketConnected && _channel != null) {
-      try {
-        print("🛑 Stop signal sent");
-        _channel!.sink.add("__STOP__");
-
-        await Future.delayed(const Duration(milliseconds: 700));
-        await _channel!.sink.close();
-      } catch (_) {}
-    }
-
-    _socketConnected = false;
-    _channel = null;
-    print("⏹ Recording stopped");
-  }
-
-  @override
-  void dispose() {
-    _audioSubscription?.cancel();
-    _recorder.dispose();
+    _channel?.sink.add("__STOP__");
     _channel?.sink.close();
-    super.dispose();
   }
 
-  /// 🖥 UI
+  // ------------------ UI ------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Live Speech Translator"),
+        title: const Text("Speech Translator"),
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            /// 🌍 Language Selector
-            DropdownButton<String>(
-              value: _selectedLanguageName,
-              isExpanded: true,
-              items: languageMap.keys.map((lang) {
-                return DropdownMenuItem(
-                  value: lang,
-                  child: Text(lang),
+      body: Column(
+        children: [
+          const SizedBox(height: 10),
+
+          // 🎛 Controls
+          ElevatedButton(
+            onPressed: _recording ? _stop : _start,
+            child: Text(_recording ? "Stop" : "Start"),
+          ),
+
+          const SizedBox(height: 10),
+
+          Text(
+            "Live Translation (${targetLanguage.toUpperCase()})",
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+
+          const Divider(),
+
+          // 📝 Transcription + Translation
+          Expanded(
+            child: ListView.builder(
+              controller: _scroll,
+              itemCount: _segments.length,
+              itemBuilder: (context, index) {
+                final seg = _segments[index];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Original
+                      Text(
+                        seg.original,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      // Translation
+                      Text(
+                        seg.translated,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: Colors.blue,
+                        ),
+                      ),
+                      const Divider(),
+                    ],
+                  ),
                 );
-              }).toList(),
-              onChanged: (value) {
-                if (value == null) return;
-
-                setState(() {
-                  _selectedLanguageName = value;
-                  _targetLanguage = languageMap[value]!;
-                });
-
-                print("🌍 Target language changed to $_targetLanguage");
               },
             ),
-
-            const SizedBox(height: 20),
-
-            ElevatedButton(
-              onPressed: _isRecording ? _stopRecording : _startRecording,
-              child: Text(_isRecording ? "Stop" : "Start"),
-            ),
-
-            const SizedBox(height: 25),
-
-            if (_languageInfo.isNotEmpty)
-              Text(
-                "Language: $_languageInfo",
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-
-            const SizedBox(height: 15),
-
-            Container(
-              padding: const EdgeInsets.all(16),
-              width: double.infinity,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade400),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _translatedText.isEmpty
-                    ? "Speak something..."
-                    : _translatedText,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 18),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _audioSub?.cancel();
+    _recorder.dispose();
+    _channel?.sink.close();
+    super.dispose();
+  }
+}
+
+// ------------------ MODEL ------------------
+class _Segment {
+  final String original;
+  final String translated;
+  final String sourceLang;
+  final String targetLang;
+
+  _Segment({
+    required this.original,
+    required this.translated,
+    required this.sourceLang,
+    required this.targetLang,
+  });
 }

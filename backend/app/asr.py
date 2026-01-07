@@ -1,46 +1,53 @@
-import numpy as np
-import time
-from faster_whisper import WhisperModel
+# import numpy as np
+# import time
+# from faster_whisper import WhisperModel
 
+# SAMPLE_RATE = 16000
+# PARTIAL_SEC = 0.6  # latency control
 
-class StreamingASR:
-    def __init__(self):
-        print("🧠 Loading Whisper model...")
-        self.model = WhisperModel(
-            "small",
-            device="cpu",
-            compute_type="int8"
-        )
-        print("✅ Whisper model loaded")
+# class StreamingASR:
+#     def __init__(self):
+#         self.model = WhisperModel(
+#             "small",
+#             device="cpu",
+#             compute_type="int8"
+#         )
+#         self.buffer = bytearray()
+#         self.last_partial = time.time()
 
-        self.buffer = bytearray()
+#     def add_audio(self, data: bytes):
+#         self.buffer.extend(data)
 
-    def add_audio(self, data: bytes):
-        self.buffer.extend(data)
+#     def _decode(self, audio):
+#         segments, info = self.model.transcribe(
+#             audio,
+#             beam_size=5,
+#             vad_filter=False,
+#             temperature=0.0
+#         )
+#         text = " ".join(s.text.strip() for s in segments)
+#         return text.strip(), info.language
 
-    def transcribe_final(self):
-        MIN_BYTES = 64000  # ~2 seconds
+#     def partial_ready(self):
+#         return time.time() - self.last_partial >= PARTIAL_SEC
 
-        if len(self.buffer) < MIN_BYTES:
-            return "", None
+#     def transcribe_partial(self):
+#         if len(self.buffer) < SAMPLE_RATE * 2:
+#             return "", None
 
-        print("📝 Transcribing full buffer...")
+#         audio = np.frombuffer(
+#             self.buffer[-int(SAMPLE_RATE*PARTIAL_SEC*2):],
+#             dtype=np.int16
+#         ).astype(np.float32) / 32768.0
 
-        audio_int16 = np.frombuffer(bytes(self.buffer), dtype=np.int16)
-        audio_float32 = audio_int16.astype(np.float32) / 32768.0
+#         self.last_partial = time.time()
+#         return self._decode(audio)
 
-        segments, info = self.model.transcribe(
-            audio_float32,
-            beam_size=5,
-            vad_filter=False,
-            temperature=0.0,
-        )
+#     def transcribe_final(self):
+#         audio = np.frombuffer(
+#             self.buffer, dtype=np.int16
+#         ).astype(np.float32) / 32768.0
 
-        text = " ".join(seg.text.strip() for seg in segments)
-        language = info.language  # ✅ THIS LINE
-
-        print(f"📝 ASR RESULT: {text}")
-        print(f"🌍 Detected language: {language}")
-
-        self.buffer.clear()
-        return text, language
+#         text, lang = self._decode(audio)
+#         self.buffer.clear()
+#         return text, lang
